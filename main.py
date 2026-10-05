@@ -7,8 +7,97 @@ from pathlib import Path
 import vk_api
 from vk_api.longpoll import VkLongPoll, VkEventType
 
-from deployer import ProjectDeployer, ProjectInput
-from launcher_patch import patch_apk
+
+try:
+    from deployer import ProjectDeployer
+except ModuleNotFoundError:
+    # Single-file fallback for hosts that only start/upload main.py.
+    import posixpath
+    import tempfile
+    import shutil
+    from ftplib import FTP, error_perm
+    import mysql.connector
+
+    TEMPLATE_DIR = Path("template/crmp")
+
+    class ProjectDeployer:
+        def __init__(self, d):
+            self.d = d
+            self.ftp = None
+            self.tmp = None
+
+        def connect(self):
+            self.ftp = FTP()
+            self.ftp.connect(self.d["ftp_host"], self.d["ftp_port"], timeout=20)
+            self.ftp.login(self.d["ftp_login"], self.d["ftp_password"])
+            c = mysql.connector.connect(host=self.d["db_host"], port=self.d["db_port"], user=self.d["db_user"], password=self.d["db_password"], database=self.d["db_name"], connection_timeout=15)
+            c.close()
+
+        def prepare_local_template(self):
+            if not TEMPLATE_DIR.exists():
+                raise RuntimeError("template/crmp не найден")
+            self.tmp = tempfile.mkdtemp(prefix="crmp-build-")
+            dst = Path(self.tmp) / "server"
+            shutil.copytree(TEMPLATE_DIR, dst)
+            mysql_ini = dst / "scriptfiles/bykranin_mysql_settings.ini"
+            if mysql_ini.exists():
+                text = mysql_ini.read_text(encoding="utf-8", errors="ignore")
+                for key, value in {"host":self.d["db_host"],"username":self.d["db_user"],"password":self.d["db_password"],"database":self.d["db_name"]}.items():
+                    text = re.sub(rf"(?m)^{re.escape(key)}\s*=.*$", f"{key} = {value}", text)
+                mysql_ini.write_text(text, encoding="utf-8")
+            settings = dst / "scriptfiles/bykranin_server_settings.ini"
+            if settings.exists():
+                st=settings.read_text(encoding="utf-8", errors="ignore")
+                for key,value in {"nameserver":self.d["name"],"vk":self.d.get("vk",""),"site":self.d.get("weburl",""),"tg":self.d.get("tg","")}.items():
+                    st=re.sub(rf"(?m)^{re.escape(key)}\s*=.*$", f"{key} = {value}", st)
+                settings.write_text(st, encoding="utf-8")
+            cfg=dst/"server.cfg"
+            if cfg.exists():
+                ct=cfg.read_text(encoding="utf-8", errors="ignore")
+                ct=re.sub(r"(?m)^hostname\s+.*$", f"hostname {self.d['name']}", ct)
+                ct=re.sub(r"(?m)^weburl\s+.*$", f"weburl {self.d.get('weburl','')}", ct)
+                ct=re.sub(r"(?m)^port\s+\d+$", f"port {self.d['port']}", ct)
+                cfg.write_text(ct, encoding="utf-8")
+
+        def _mkdir(self,path):
+            if not path or path=="/": return
+            cur=""
+            for part in [x for x in path.split('/') if x]:
+                cur += '/' + part
+                try: self.ftp.cwd(cur)
+                except error_perm:
+                    try: self.ftp.mkd(cur)
+                    except error_perm: pass
+
+        def upload_server(self):
+            root=self.d["remote_path"].rstrip('/') or '/'
+            local=Path(self.tmp)/"server"
+            self._mkdir(root)
+            for path in local.rglob('*'):
+                rel=path.relative_to(local).as_posix(); remote=posixpath.join(root,rel)
+                if path.is_dir(): self._mkdir(remote)
+                else:
+                    self._mkdir(posixpath.dirname(remote))
+                    with open(path,'rb') as f: self.ftp.storbinary(f"STOR {remote}",f)
+
+        def import_database(self):
+            sql=Path("template/crmp/bd.sql")
+            if not sql.exists(): raise RuntimeError("template/crmp/bd.sql не найден")
+            conn=mysql.connector.connect(host=self.d["db_host"],port=self.d["db_port"],user=self.d["db_user"],password=self.d["db_password"],database=self.d["db_name"],connection_timeout=20)
+            cur=conn.cursor(); raw=sql.read_text(encoding='utf-8',errors='ignore')
+            # Use mysql-connector multi=True when available.
+            try:
+                for result in cur.execute(raw, multi=True):
+                    if result.with_rows: result.fetchall()
+            except TypeError:
+                for stmt in [x.strip() for x in raw.split(';') if x.strip()]: cur.execute(stmt)
+            conn.commit(); cur.close(); conn.close()
+
+try:
+    from launcher_patch import patch_apk
+except ModuleNotFoundError:
+    def patch_apk(*args, **kwargs):
+        raise RuntimeError("launcher_patch.py не загружен; серверная часть работает, но APK пока не собирается")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
