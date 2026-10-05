@@ -1,0 +1,4 @@
+vk-api==11.10.0
+paramiko==3.5.1
+mysql-connector-python==9.4.0
+requests==2.32.5
