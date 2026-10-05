@@ -9,8 +9,8 @@ from vk_api.longpoll import VkLongPoll, VkEventType
 
 
 try:
-    from deployer import ProjectDeployer
-except ModuleNotFoundError:
+    from deployer import ProjectDeployer, ProjectInput
+except (ModuleNotFoundError, ImportError):
     # Single-file fallback for hosts that only start/upload main.py.
     import posixpath
     import tempfile
@@ -19,6 +19,8 @@ except ModuleNotFoundError:
     import mysql.connector
 
     TEMPLATE_DIR = Path("template/crmp")
+
+    ProjectInput = dict
 
     class ProjectDeployer:
         def __init__(self, d):
@@ -252,6 +254,11 @@ def run_project(vk, peer, state):
         logging.exception("project failed")
         send(vk, peer, f"❌ Ошибка создания проекта:\n{type(e).__name__}: {e}")
     finally:
+        try:
+            if "deployer" in locals() and hasattr(deployer, "close"):
+                deployer.close()
+        except Exception:
+            logging.exception("deployer cleanup failed")
         sessions.pop(peer, None)
 
 def main():

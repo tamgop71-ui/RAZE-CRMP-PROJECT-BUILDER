@@ -1,14 +1,1 @@
-donate = 100000
-money = 5000000
-vip = 1
-lvl = 3
-
-nameserver = TEST KRANIN
-tg = kraninn
-vk = vk.com/kraninn
-site = kraninn.t.me
-
-audio_url = https://api.kraninshop.ru/golda.mp3
-cc_message = {FFCD00}Чат был очищен администратором: {FFFFFF}%s
-
-whitelist = 0
+Положите APK-шаблон сюда и переименуйте в launcher-template.apk
